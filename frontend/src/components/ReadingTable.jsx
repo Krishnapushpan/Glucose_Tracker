@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Activity, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
+import { Activity, ChevronLeft, ChevronRight, Pencil, Trash2 } from 'lucide-react';
 
 function getStatusBadge(val) {
   if (val < 70) {
@@ -26,7 +26,13 @@ export function formatDateDisplay(rawDate) {
 
 const PAGE_SIZE = 5;
 
-export default function ReadingTable({ readings = [], onDeleteReading, loading = false }) {
+export default function ReadingTable({
+  readings = [],
+  onDeleteReading,
+  onEditReading,
+  editingReadingId = null,
+  loading = false,
+}) {
   const [currentPage, setCurrentPage] = useState(1);
 
   const totalPages = Math.max(1, Math.ceil(readings.length / PAGE_SIZE));
@@ -94,10 +100,19 @@ export default function ReadingTable({ readings = [], onDeleteReading, loading =
               return (
                 <tr
                   key={r.id}
-                  className="transition-colors hover:bg-[#e3f1eb]/30"
+                  className={`transition-colors ${
+                    editingReadingId === r.id
+                      ? 'bg-[#e3f1eb]/60 ring-1 ring-inset ring-[#48a992]/40'
+                      : 'hover:bg-[#e3f1eb]/30'
+                  }`}
                 >
                   <td className="whitespace-nowrap px-6 py-4 font-medium text-[#2d4742]">
-                    {formatDateDisplay(r.date)}
+                    <div className="flex items-center gap-2">
+                      {editingReadingId === r.id && (
+                        <span className="h-2 w-2 rounded-full bg-[#48a992] animate-pulse" title="Editing" />
+                      )}
+                      <span>{formatDateDisplay(r.date)}</span>
+                    </div>
                   </td>
                   <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-[#1e6355]">
                     {r.slotLabel || r.slot}
@@ -116,14 +131,30 @@ export default function ReadingTable({ readings = [], onDeleteReading, loading =
                     </span>
                   </td>
                   <td className="whitespace-nowrap px-6 py-4 text-right">
-                    <button
-                      type="button"
-                      onClick={() => onDeleteReading(r.id)}
-                      aria-label={`Delete reading for ${r.slotLabel || r.slot} on ${r.date}`}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[#6d8781] transition-colors hover:bg-[#ec4d43]/10 hover:text-[#c9382f] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#ec4d43]"
-                    >
-                      <Trash2 className="h-4 w-4" aria-hidden="true" />
-                    </button>
+                    <div className="flex items-center justify-end gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => onEditReading && onEditReading(r)}
+                        title="Edit reading"
+                        aria-label={`Edit reading for ${r.slotLabel || r.slot} on ${r.date}`}
+                        className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#48a992] ${
+                          editingReadingId === r.id
+                            ? 'bg-[#48a992] text-white shadow-sm'
+                            : 'text-[#267464] hover:bg-[#e3f1eb] hover:text-[#1e6355]'
+                        }`}
+                      >
+                        <Pencil className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteReading(r.id)}
+                        title="Delete reading"
+                        aria-label={`Delete reading for ${r.slotLabel || r.slot} on ${r.date}`}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[#6d8781] transition-colors hover:bg-[#ec4d43]/10 hover:text-[#c9382f] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#ec4d43]"
+                      >
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );

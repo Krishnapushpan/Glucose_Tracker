@@ -62,6 +62,8 @@ export default function DashboardPage() {
     }
   }, [today]);
 
+  const [editingReading, setEditingReading] = useState(null);
+
   useEffect(() => {
     loadData();
   }, [loadData]);
@@ -70,10 +72,22 @@ export default function DashboardPage() {
     if (!window.confirm('Are you sure you want to delete this reading?')) return;
     try {
       await apiRequest(`/readings/${id}`, { method: 'DELETE' });
+      if (editingReading?.id === id) {
+        setEditingReading(null);
+      }
       loadData();
     } catch (err) {
       alert(err.message || 'Could not delete reading.');
     }
+  }
+
+  function handleEditReading(reading) {
+    setEditingReading(reading);
+    document.getElementById('reading-form-card')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function handleCancelEdit() {
+    setEditingReading(null);
   }
 
   function handleLogout() {
@@ -207,6 +221,12 @@ export default function DashboardPage() {
           <div className="lg:col-span-5 xl:col-span-4">
             <ReadingForm
               onReadingAdded={() => loadData()}
+              onReadingUpdated={() => {
+                setEditingReading(null);
+                loadData();
+              }}
+              editingReading={editingReading}
+              onCancelEdit={handleCancelEdit}
               allReadings={readings}
             />
           </div>
@@ -216,6 +236,8 @@ export default function DashboardPage() {
             <ReadingTable
               readings={readings}
               onDeleteReading={handleDeleteReading}
+              onEditReading={handleEditReading}
+              editingReadingId={editingReading?.id}
               loading={loading}
             />
           </div>

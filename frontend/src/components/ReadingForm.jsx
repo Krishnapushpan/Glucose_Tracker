@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, Info, PlusCircle } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { AlertCircle, Check, CheckCircle2, Info, Pencil, PlusCircle, X } from 'lucide-react';
 import { apiRequest } from '../api';
 import { formatDateDisplay } from './ReadingTable';
 
@@ -18,7 +18,13 @@ function getTodayString() {
   return `${y}-${m}-${day}`;
 }
 
-export default function ReadingForm({ onReadingAdded, allReadings = [] }) {
+export default function ReadingForm({
+  onReadingAdded,
+  onReadingUpdated,
+  editingReading = null,
+  onCancelEdit,
+  allReadings = [],
+}) {
   const today = getTodayString();
   const [date, setDate] = useState(today);
   const [slot, setSlot] = useState('morning');
@@ -27,12 +33,40 @@ export default function ReadingForm({ onReadingAdded, allReadings = [] }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  // Slots already logged for whichever date is currently selected in the date input
+  const isEditing = Boolean(editingReading);
+
+  // When editing reading changes, load its values into the form
+  useEffect(() => {
+    if (editingReading) {
+      setDate(formatDateDisplay(editingReading.date) || today);
+      setSlot(editingReading.slot || 'morning');
+      setValue(editingReading.value !== undefined ? String(editingReading.value) : '');
+      setError('');
+      setSuccess('');
+    }
+  }, [editingReading, today]);
+
+  function handleCancel() {
+    setDate(today);
+    setSlot('morning');
+    setValue('');
+    setError('');
+    setSuccess('');
+    if (onCancelEdit) {
+      onCancelEdit();
+    }
+  }
+
+  // Slots already logged for whichever date is currently selected in the date input.
+  // When editing, exclude the reading currently being edited from the conflict list.
   const existingSlotsForSelectedDate = useMemo(() => {
     return allReadings
-      .filter((r) => formatDateDisplay(r.date) === date)
+      .filter((r) => {
+        if (editingReading && r.id === editingReading.id) return false;
+        return formatDateDisplay(r.date) === date;
+      })
       .map((r) => r.slot);
-  }, [allReadings, date]);
+  }, [allReadings, date, editingReading]);
 
   const isDayFull = existingSlotsForSelectedDate.length >= 4;
 
@@ -75,38 +109,93 @@ export default function ReadingForm({ onReadingAdded, allReadings = [] }) {
 
     setSubmitting(true);
     try {
-      const response = await apiRequest('/readings', {
-        method: 'POST',
-        body: { date, slot, value: num },
-      });
+      if (isEditing) {
+        const response = await apiRequest(`/readings/${editingReading.id}`, {
+          method: 'PUT',
+          body: { date, slot, value: num },
+        });
 
-      setSuccess(`Reading of ${num} mg/dL recorded successfully!`);
-      setValue('');
-      if (onReadingAdded) {
-        onReadingAdded(response.reading);
+        setSuccess(`Reading updated to ${num} mg/dL successfully!`);
+        if (onReadingUpdated) {
+          onReadingUpdated(response.reading);
+        }
+      } else {
+        const response = await apiRequest('/readings', {
+          method: 'POST',
+          body: { date, slot, value: num },
+        });
+
+        setSuccess(`Reading of ${num} mg/dL recorded successfully!`);
+        setValue('');
+        if (onReadingAdded) {
+          onReadingAdded(response.reading);
+        }
       }
     } catch (err) {
-      setError(err.message || 'Failed to save reading.');
+      setError(err.message || (isEditing ? 'Failed to update reading.' : 'Failed to save reading.'));
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <div className="rounded-3xl border border-[#48a992]/20 bg-[#fafcf9] p-6 shadow-sm">
+    <div
+      id="reading-form-card"
+      className="scroll-mt-24 rounded-3xl border border-[#48a992]/20 bg-[#fafcf9] p-6 shadow-sm transition-all"
+    >
       <div className="flex items-center gap-3 border-b border-[#48a992]/15 pb-4">
-        <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#e3f1eb] text-[#267464]">
-          <PlusCircle className="h-5 w-5" aria-hidden="true" />
+        <span
+          className={`flex h-10 w-10 items-center justify-center rounded-xl ${
+            isEditing ? 'bg-[#48a992] text-white shadow-sm' : 'bg-[#e3f1eb] text-[#267464]'
+          }`}
+        >
+          {isEditing ? (
+            <Pencil className="h-5 w-5" aria-hidden="true" />
+          ) : (
+            <PlusCircle className="h-5 w-5" aria-hidden="true" />
+          )}
         </span>
-        <div>
-          <h2 className="font-display text-lg font-bold text-[#267464]">
-            Log Glucose Reading
-          </h2>
+        <div className="flex-1">
+          <div className="flex items-center justify-between">
+            <h2 className="font-display text-lg font-bold text-[#267464]">
+              {isEditing ? 'Edit Glucose Reading' : 'Log Glucose Reading'}
+            </h2>
+            {isEditing && (
+              <span className="rounded-full bg-[#e3f1eb] px-2.5 py-0.5 text-[11px] font-semibold text-[#1e6355]">
+                Edit Mode
+              </span>
+            )}
+          </div>
           <p className="text-xs text-[#5b7670]">
-            Enter your blood sugar reading (40–600 mg/dL)
+            {isEditing
+              ? `Updating reading #${editingReading.id} (${editingReading.slotLabel || editingReading.slot})`
+              : 'Enter your blood sugar reading (40–600 mg/dL)'}
           </p>
         </div>
       </div>
+
+      {isEditing && (
+        <div
+          role="status"
+          className="mt-4 flex items-center justify-between gap-2.5 rounded-2xl border border-[#48a992]/40 bg-[#e3f1eb]/70 p-3 text-xs text-[#1e6355]"
+        >
+          <div className="flex items-center gap-2">
+            <Pencil className="h-4 w-4 shrink-0 text-[#267464]" aria-hidden="true" />
+            <span>
+              Editing <strong>{editingReading.slotLabel || editingReading.slot}</strong> for{' '}
+              <strong>{formatDateDisplay(editingReading.date)}</strong>
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="inline-flex items-center gap-1 rounded-full border border-[#48a992]/30 bg-white px-2.5 py-1 text-[11px] font-semibold text-[#267464] shadow-sm transition-colors hover:bg-[#fafcf9]"
+          >
+            <X className="h-3 w-3" aria-hidden="true" />
+            <span>Cancel</span>
+          </button>
+        </div>
+      )}
 
       {isDayFull && (
         <div
@@ -238,21 +327,42 @@ export default function ReadingForm({ onReadingAdded, allReadings = [] }) {
           </p>
         </div>
 
-        {/* Submit Button */}
-        <button
-          type="submit"
-          disabled={submitting || isDayFull}
-          className="mt-2 flex w-full items-center justify-center gap-2 rounded-full bg-[#48a992] px-5 py-3 text-sm font-semibold text-[#faf7f4] shadow-sm shadow-[#267464]/20 transition-all hover:bg-[#267464] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#267464] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <PlusCircle className="h-4 w-4" aria-hidden="true" />
-          <span>
-            {isDayFull
-              ? 'All 4 Slots Logged for This Date'
-              : submitting
-              ? 'Saving Reading...'
-              : 'Add Reading'}
-          </span>
-        </button>
+        {/* Submit & Cancel Buttons */}
+        <div className="mt-2 flex items-center gap-3">
+          <button
+            type="submit"
+            disabled={submitting || isDayFull}
+            className="flex flex-1 items-center justify-center gap-2 rounded-full bg-[#48a992] px-5 py-3 text-sm font-semibold text-[#faf7f4] shadow-sm shadow-[#267464]/20 transition-all hover:bg-[#267464] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#267464] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isEditing ? (
+              <Check className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              <PlusCircle className="h-4 w-4" aria-hidden="true" />
+            )}
+            <span>
+              {isDayFull
+                ? 'All 4 Slots Logged for This Date'
+                : submitting
+                ? isEditing
+                  ? 'Updating Reading...'
+                  : 'Saving Reading...'
+                : isEditing
+                ? 'Update Reading'
+                : 'Add Reading'}
+            </span>
+          </button>
+
+          {isEditing && (
+            <button
+              type="button"
+              onClick={handleCancel}
+              disabled={submitting}
+              className="rounded-full border border-[#48a992]/30 bg-white px-5 py-3 text-sm font-semibold text-[#4e6b64] shadow-sm transition-all hover:bg-[#e3f1eb] hover:text-[#267464] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#48a992]"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
       </form>
     </div>
   );
