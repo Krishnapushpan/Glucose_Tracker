@@ -1,14 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
-import { Eye, EyeOff, Info, Lock, Mail, X } from 'lucide-react';
+import { Eye, EyeOff, Lock, Mail, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function LoginModal({ isOpen, onClose, onSwitchToSignup }) {
+  const { login } = useAuth();
+  const navigate = useNavigate();
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState({});
-  const [statusMessage, setStatusMessage] = useState('');
+  const [serverError, setServerError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   const emailInputRef = useRef(null);
 
@@ -19,7 +25,8 @@ export default function LoginModal({ isOpen, onClose, onSwitchToSignup }) {
     setPassword('');
     setShowPassword(false);
     setErrors({});
-    setStatusMessage('');
+    setServerError('');
+    setSubmitting(false);
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -64,20 +71,29 @@ export default function LoginModal({ isOpen, onClose, onSwitchToSignup }) {
     return nextErrors;
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
     const validationErrors = validate();
 
     if (Object.keys(validationErrors).length > 0) {
       setErrors(validationErrors);
-      setStatusMessage('');
+      setServerError('');
       return;
     }
 
     setErrors({});
-    setStatusMessage(
-      'Form inputs are valid. Authentication will be connected once backend integration is added.'
-    );
+    setServerError('');
+    setSubmitting(true);
+
+    try {
+      await login(email.trim(), password);
+      onClose();
+      navigate('/dashboard');
+    } catch (err) {
+      setServerError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   function handleFieldChange(field, value) {
@@ -87,8 +103,8 @@ export default function LoginModal({ isOpen, onClose, onSwitchToSignup }) {
     if (errors[field]) {
       setErrors((prev) => ({ ...prev, [field]: undefined }));
     }
-    if (statusMessage) {
-      setStatusMessage('');
+    if (serverError) {
+      setServerError('');
     }
   }
 
@@ -126,13 +142,12 @@ export default function LoginModal({ isOpen, onClose, onSwitchToSignup }) {
           </p>
         </div>
 
-        {statusMessage && (
+        {serverError && (
           <div
-            role="status"
-            className="mb-5 flex items-start gap-2.5 rounded-2xl border border-[#48a992]/35 bg-[#e3f1eb] px-3.5 py-3 text-sm text-[#1e6355]"
+            role="alert"
+            className="mb-5 rounded-2xl border border-[#ec4d43]/35 bg-[#ec4d43]/5 px-3.5 py-3 text-sm text-[#d63b32]"
           >
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-[#267464]" aria-hidden="true" />
-            <span>{statusMessage}</span>
+            {serverError}
           </div>
         )}
 
@@ -231,9 +246,10 @@ export default function LoginModal({ isOpen, onClose, onSwitchToSignup }) {
 
           <button
             type="submit"
-            className="mt-2 w-full rounded-full bg-[#48a992] px-4 py-2.5 text-sm font-semibold text-[#faf7f4] shadow-sm shadow-[#267464]/20 transition-all hover:bg-[#267464] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#267464] focus-visible:ring-offset-2"
+            disabled={submitting}
+            className="mt-2 w-full rounded-full bg-[#48a992] px-4 py-2.5 text-sm font-semibold text-[#faf7f4] shadow-sm shadow-[#267464]/20 transition-all hover:bg-[#267464] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#267464] focus-visible:ring-offset-2 disabled:opacity-60"
           >
-            Login
+            {submitting ? 'Logging in...' : 'Login'}
           </button>
         </form>
 
