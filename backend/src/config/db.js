@@ -1,5 +1,9 @@
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
 require('dotenv').config();
+
+// Ensure PostgreSQL DATE (type OID 1082) is returned as raw YYYY-MM-DD string
+// to avoid UTC timezone offsets in JSON responses
+types.setTypeParser(1082, (val) => val);
 
 const connectionString = process.env.DATABASE_URL;
 
