@@ -5,9 +5,11 @@ import {
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import GlucoseChartsSection from '../components/GlucoseChartsSection';
 import glucometerHeroImg from '../assets/glucometer-hero.jpg';
+import { useAuth } from '../context/AuthContext';
 
 const HIGHLIGHTS = [
   {
@@ -31,6 +33,9 @@ const HIGHLIGHTS = [
 ];
 
 export default function LandingPage({ onOpenLogin }) {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+
   return (
     <div className="bg-paper-grain relative flex min-h-screen flex-col overflow-x-clip bg-[#f1f6f3] text-[#2d4742]">
       {/* Unified Header + Hero wrapper so there is no separation */}
@@ -162,7 +167,7 @@ export default function LandingPage({ onOpenLogin }) {
             <rect x="22" y="42" width="44" height="42" fill="#EC4D43" />
           </svg>
 
-          <div className="relative z-10 mx-auto w-full max-w-6xl px-4 pb-16 pt-28 sm:px-6 sm:pt-32 lg:px-8 lg:pb-24 lg:pt-32">
+          <div className="relative z-10 mx-auto w-full max-w-[1440px] px-4 pb-16 pt-28 sm:px-6 sm:pt-32 lg:px-8 lg:pb-24 lg:pt-32">
             <div className="grid items-center gap-12 lg:grid-cols-12 lg:gap-10">
               {/* Left Copy */}
               <div className="text-center lg:col-span-6 lg:text-left">
@@ -191,10 +196,16 @@ export default function LandingPage({ onOpenLogin }) {
                 <div className="mt-9 flex flex-col items-center justify-center gap-4 sm:flex-row lg:justify-start">
                   <button
                     type="button"
-                    onClick={onOpenLogin}
+                    onClick={() => {
+                      if (user) {
+                        navigate('/dashboard');
+                      } else {
+                        onOpenLogin();
+                      }
+                    }}
                     className="inline-flex w-full items-center justify-center gap-2 rounded-full border-2 border-[#48a992] bg-[#48a992] px-8 py-3.5 text-base font-semibold text-[#faf7f4] shadow-md shadow-[#267464]/15 transition-all duration-150 hover:border-[#267464] hover:bg-[#267464] hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[#267464] focus-visible:ring-offset-2 sm:w-auto"
                   >
-                    <span>Get Started</span>
+                    <span>{user ? 'Go to Dashboard' : 'Get Started'}</span>
                     <ArrowRight className="h-4 w-4" aria-hidden="true" />
                   </button>
                 </div>
@@ -252,7 +263,7 @@ export default function LandingPage({ onOpenLogin }) {
           aria-label="Key benefits"
           className="border-t border-[#48a992]/20 bg-[#e9f3ee]/65 py-14 sm:py-16"
         >
-          <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+          <div className="mx-auto w-full max-w-[1440px] px-4 sm:px-6 lg:px-8">
             <div className="grid gap-6 md:grid-cols-3">
               {HIGHLIGHTS.map(({ icon: Icon, title, description }) => (
                 <div
@@ -276,7 +287,7 @@ export default function LandingPage({ onOpenLogin }) {
       </main>
 
       <footer className="border-t border-[#48a992]/20 bg-[#f1f6f3] py-6">
-        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-2 px-4 text-xs text-[#5b7670] sm:flex-row sm:px-6 lg:px-8">
+        <div className="mx-auto flex w-full max-w-[1440px] flex-col items-center justify-between gap-2 px-4 text-xs text-[#5b7670] sm:flex-row sm:px-6 lg:px-8">
           <p className="font-semibold text-[#267464]">
             Sweetly — Smart Glucose Tracking Made Simple
           </p>

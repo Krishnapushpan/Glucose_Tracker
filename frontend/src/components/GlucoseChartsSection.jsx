@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Activity,
   ArrowDownRight,
@@ -7,8 +8,12 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  PlusCircle,
+  Sparkles,
   TrendingUp,
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { apiRequest } from '../api';
 import ReportCard from './ReportCard';
 
 const SLOTS = [
@@ -17,6 +22,13 @@ const SLOTS = [
   { key: 'after_lunch', label: 'After Lunch', shortLabel: 'Lunch' },
   { key: 'after_dinner', label: 'After Dinner', shortLabel: 'Dinner' },
 ];
+
+const SHORT_LABELS = {
+  morning: 'Morning',
+  after_breakfast: 'Breakfast',
+  after_lunch: 'Lunch',
+  after_dinner: 'Dinner',
+};
 
 const TARGET_MIN = 70;
 const TARGET_MAX = 140;
@@ -61,7 +73,7 @@ function getStatusInfo(value) {
   return { label: 'In Range', color: '#48a992', pill: 'bg-[#e3f1eb] text-[#267464]' };
 }
 
-// Deterministic pseudo-random helper so each date consistently displays realistic glucose readings
+// Sample fallback generator for guest / unauthenticated visitors
 function seededWave(seed) {
   const x = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
   return x - Math.floor(x);
@@ -83,7 +95,6 @@ function getSampleReadingsForDate(dateStr, todayStr) {
 
   return slotBaselines.map((item, idx) => {
     const r = seededWave(seedBase + idx * 37);
-    // Occasional slightly elevated post-meal spike for realistic variation
     const spike = idx === 2 && seededWave(seedBase + 91) > 0.72 ? 18 : 0;
     const value = Math.round(item.base + (r - 0.35) * item.spread + spike);
     const meta = SLOTS[idx];
@@ -169,26 +180,126 @@ function getSampleMonthSeries(dateStr, todayStr) {
   };
 }
 
-function DailyChart({ readings }) {
+// Compute real monthly statistics from the user's database readings
+function computeMonthDataFromReadings(userReadings, dateStr) {
+  const selected = parseDateISO(dateStr);
+  const year = selected.getFullYear();
+  const month = selected.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const targetMonthPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+
+  const monthReadings = userReadings.filter((r) => {
+    const dStr = typeof r.date === 'string' ? r.date.slice(0, 10) : '';
+    return dStr.startsWith(targetMonthPrefix);
+  });
+
+  const dayMap = {};
+  const slotTotals = {
+    morning: { sum: 0, count: 0 },
+    after_breakfast: { sum: 0, count: 0 },
+    after_lunch: { sum: 0, count: 0 },
+    after_dinner: { sum: 0, count: 0 },
+  };
+  const allValues = [];
+
+  monthReadings.forEach((r) => {
+    const dStr = typeof r.date === 'string' ? r.date.slice(0, 10) : '';
+    const dayNum = parseInt(dStr.slice(8, 10), 10);
+    if (!dayMap[dayNum]) {
+      dayMap[dayNum] = [];
+    }
+    dayMap[dayNum].push(r.value);
+    allValues.push(r.value);
+
+    if (slotTotals[r.slot]) {
+      slotTotals[r.slot].sum += r.value;
+      slotTotals[r.slot].count += 1;
+    }
+  });
+
+  const days = Object.keys(dayMap)
+    .map(Number)
+    .sort((a, b) => a - b)
+    .map((dayNum) => {
+      const vals = dayMap[dayNum];
+      const avg = Number(
+        (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1)
+      );
+      const dayStr = `${targetMonthPrefix}-${String(dayNum).padStart(2, '0')}`;
+      return {
+        day: dayNum,
+        date: dayStr,
+        average: avg,
+        highest: Math.max(...vals),
+        lowest: Math.min(...vals),
+        count: vals.length,
+      };
+    });
+
+  const hasData = allValues.length > 0;
+  const slotAverages = SLOTS.map((slot) => {
+    const entry = slotTotals[slot.key];
+    return {
+      ...slot,
+      average:
+        entry && entry.count > 0
+          ? Number((entry.sum / entry.count).toFixed(1))
+          : null,
+    };
+  });
+
+  return {
+    days,
+    daysInMonth,
+    slotAverages,
+    summary: {
+      hasData,
+      count: allValues.length,
+      highest: hasData ? Math.max(...allValues) : null,
+      lowest: hasData ? Math.min(...allValues) : null,
+      average: hasData
+        ? Number(
+            (allValues.reduce((a, b) => a + b, 0) / allValues.length).toFixed(1)
+          )
+        : null,
+    },
+  };
+}
+
+function DailyChart({ readings, onNavigateDashboard, isLoggedIn, dateLabel }) {
   const [activeIndex, setActiveIndex] = useState(null);
 
   if (readings.length === 0) {
     return (
-      <div className="flex h-72 flex-col items-center justify-center rounded-2xl border border-dashed border-[#48a992]/30 bg-[#f1f6f3]/60 px-6 text-center">
-        <Activity className="h-9 w-9 text-[#48a992]/70" aria-hidden="true" />
+      <div className="flex min-h-[300px] flex-col items-center justify-center rounded-2xl border border-dashed border-[#48a992]/30 bg-[#f1f6f3]/60 p-8 text-center">
+        <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#e3f1eb] text-[#267464]">
+          <Activity className="h-6 w-6" aria-hidden="true" />
+        </span>
         <p className="font-display mt-3 text-lg font-bold text-[#267464]">
-          No readings recorded for this date
+          No readings recorded for {dateLabel}
         </p>
-        <p className="mt-1 max-w-sm text-sm text-[#5b7670]">
-          Select today or an earlier date to explore the daily meal-slot glucose chart.
+        <p className="mt-1.5 max-w-sm text-xs leading-relaxed text-[#5b7670]">
+          {isLoggedIn
+            ? "You haven't recorded any glucose levels for this date yet. Add your readings in the dashboard to track your daily curve."
+            : 'Select today or an earlier date to explore the daily meal-slot glucose chart.'}
         </p>
+        {isLoggedIn && onNavigateDashboard && (
+          <button
+            type="button"
+            onClick={onNavigateDashboard}
+            className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#48a992] px-5 py-2.5 text-xs font-semibold text-[#faf7f4] shadow-sm transition-all hover:bg-[#267464]"
+          >
+            <PlusCircle className="h-4 w-4" aria-hidden="true" />
+            <span>Add Reading in Dashboard</span>
+          </button>
+        )}
       </div>
     );
   }
 
-  const width = 760;
-  const height = 300;
-  const pad = { top: 28, right: 32, bottom: 50, left: 56 };
+  const width = 960;
+  const height = 310;
+  const pad = { top: 28, right: 36, bottom: 50, left: 56 };
   const plotW = width - pad.left - pad.right;
   const plotH = height - pad.top - pad.bottom;
 
@@ -199,7 +310,7 @@ function DailyChart({ readings }) {
   const yScale = (val) =>
     pad.top + plotH - ((val - yMin) / (yMax - yMin)) * plotH;
 
-  const stepX = plotW / readings.length;
+  const stepX = plotW / Math.max(1, readings.length);
   const points = readings.map((r, i) => ({
     ...r,
     x: pad.left + stepX * i + stepX / 2,
@@ -241,16 +352,16 @@ function DailyChart({ readings }) {
             fill="#48a992"
             fillOpacity="0.11"
           />
+          {/* Top-margin indicator (safely placed above the plot area to prevent overlap) */}
           <text
-            x={pad.left + plotW - 6}
-            y={targetTop + 15}
-            textAnchor="end"
+            x={pad.left + 2}
+            y={16}
             fill="#267464"
             fontSize="11"
             fontWeight="600"
             opacity="0.85"
           >
-            Target Range ({TARGET_MIN}–{TARGET_MAX} mg/dL)
+            Target Range: {TARGET_MIN}–{TARGET_MAX} mg/dL
           </text>
 
           {/* Horizontal Grid Lines & Y-Axis Labels */}
@@ -283,7 +394,7 @@ function DailyChart({ readings }) {
 
           {/* Vertical Bars for each slot */}
           {points.map((p, idx) => {
-            const barW = 54;
+            const barW = Math.min(72, Math.max(44, stepX * 0.35));
             const barH = Math.max(8, pad.top + plotH - p.y);
             const isHovered = activeIndex === idx;
             return (
@@ -308,7 +419,6 @@ function DailyChart({ readings }) {
                   fillOpacity={isHovered ? 0.34 : 0.2}
                   className="transition-all duration-150"
                 />
-                {/* X-axis label */}
                 <text
                   x={p.x}
                   y={height - 20}
@@ -317,21 +427,23 @@ function DailyChart({ readings }) {
                   fontSize="12"
                   fontWeight={isHovered ? '700' : '600'}
                 >
-                  {p.shortLabel}
+                  {p.shortLabel || p.slot}
                 </text>
               </g>
             );
           })}
 
-          {/* Connecting Trend Line */}
-          <path
-            d={linePath}
-            fill="none"
-            stroke="#267464"
-            strokeWidth="3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
+          {/* Connecting Trend Line (if at least 2 points) */}
+          {points.length > 1 && (
+            <path
+              d={linePath}
+              fill="none"
+              stroke="#267464"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          )}
 
           {/* Data Nodes + Value Labels */}
           {points.map((p, idx) => {
@@ -397,7 +509,7 @@ function DailyChart({ readings }) {
             >
               <div>
                 <p className="text-xs font-semibold text-[#2d4742]">
-                  {p.slotLabel}
+                  {p.slotLabel || p.slot}
                 </p>
                 <span
                   className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ${p.status.pill}`}
@@ -421,7 +533,7 @@ function DailyChart({ readings }) {
           role="status"
           className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#48a992]/25 bg-[#e9f3ee]/80 px-4 py-2 text-xs text-[#267464]"
         >
-          <span className="font-semibold">{hovered.slotLabel}</span>
+          <span className="font-semibold">{hovered.slotLabel || hovered.slot}</span>
           <span>
             Recorded level: <strong>{hovered.value} mg/dL</strong> ({hovered.status.label})
           </span>
@@ -431,27 +543,41 @@ function DailyChart({ readings }) {
   );
 }
 
-function MonthlyChart({ monthData }) {
+function MonthlyChart({ monthData, onNavigateDashboard, isLoggedIn, monthLabel }) {
   const [activeIndex, setActiveIndex] = useState(null);
   const { days, daysInMonth, slotAverages } = monthData;
 
   if (days.length === 0) {
     return (
-      <div className="flex h-72 flex-col items-center justify-center rounded-2xl border border-dashed border-[#48a992]/30 bg-[#f1f6f3]/60 px-6 text-center">
-        <TrendingUp className="h-9 w-9 text-[#48a992]/70" aria-hidden="true" />
+      <div className="flex min-h-[300px] flex-col items-center justify-center rounded-2xl border border-dashed border-[#48a992]/30 bg-[#f1f6f3]/60 p-8 text-center">
+        <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#e3f1eb] text-[#267464]">
+          <TrendingUp className="h-6 w-6" aria-hidden="true" />
+        </span>
         <p className="font-display mt-3 text-lg font-bold text-[#267464]">
-          No readings recorded for this month
+          No readings recorded for {monthLabel}
         </p>
-        <p className="mt-1 max-w-sm text-sm text-[#5b7670]">
-          Choose the current month or an earlier date to view monthly glucose level trends.
+        <p className="mt-1.5 max-w-sm text-xs leading-relaxed text-[#5b7670]">
+          {isLoggedIn
+            ? 'As you log daily glucose checks throughout the month, your daily averages, highs/lows, and monthly trend curve will automatically populate here.'
+            : 'Choose the current month or an earlier date to view monthly glucose level trends.'}
         </p>
+        {isLoggedIn && onNavigateDashboard && (
+          <button
+            type="button"
+            onClick={onNavigateDashboard}
+            className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#48a992] px-5 py-2.5 text-xs font-semibold text-[#faf7f4] shadow-sm transition-all hover:bg-[#267464]"
+          >
+            <PlusCircle className="h-4 w-4" aria-hidden="true" />
+            <span>Add Reading in Dashboard</span>
+          </button>
+        )}
       </div>
     );
   }
 
-  const width = 760;
+  const width = 960;
   const height = 310;
-  const pad = { top: 28, right: 28, bottom: 48, left: 56 };
+  const pad = { top: 28, right: 32, bottom: 48, left: 56 };
   const plotW = width - pad.left - pad.right;
   const plotH = height - pad.top - pad.bottom;
 
@@ -523,16 +649,16 @@ function MonthlyChart({ monthData }) {
             fill="#48a992"
             fillOpacity="0.1"
           />
+          {/* Top-margin indicator (safely placed above the plot area to prevent overlap) */}
           <text
-            x={pad.left + plotW - 6}
-            y={targetTop + 15}
-            textAnchor="end"
+            x={pad.left + 2}
+            y={16}
             fill="#267464"
             fontSize="11"
             fontWeight="600"
             opacity="0.85"
           >
-            Target Range ({TARGET_MIN}–{TARGET_MAX} mg/dL)
+            Target Range: {TARGET_MIN}–{TARGET_MAX} mg/dL
           </text>
 
           {/* Y Gridlines */}
@@ -595,14 +721,16 @@ function MonthlyChart({ monthData }) {
           )}
 
           {/* Trend Line */}
-          <path
-            d={linePath}
-            fill="none"
-            stroke="#267464"
-            strokeWidth="2.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
+          {points.length > 1 && (
+            <path
+              d={linePath}
+              fill="none"
+              stroke="#267464"
+              strokeWidth="2.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          )}
 
           {/* Interactive Day Nodes */}
           {points.map((p, idx) => {
@@ -619,7 +747,6 @@ function MonthlyChart({ monthData }) {
                 aria-label={`${formatReadableDate(p.date)}: average ${p.average} mg/dL, high ${p.highest}, low ${p.lowest}`}
                 className="cursor-pointer outline-none"
               >
-                {/* Invisible wider hit target */}
                 <circle cx={p.x} cy={p.y} r="13" fill="transparent" />
                 {isSelected && (
                   <circle
@@ -700,16 +827,73 @@ function MonthlyChart({ monthData }) {
 }
 
 export default function GlucoseChartsSection() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+
   const todayStr = useMemo(() => formatDateISO(new Date()), []);
   const [viewMode, setViewMode] = useState('daily'); // 'daily' | 'monthly'
   const [selectedDate, setSelectedDate] = useState(todayStr);
 
-  const dailyReadings = useMemo(
-    () => getSampleReadingsForDate(selectedDate, todayStr),
-    [selectedDate, todayStr]
-  );
+  // Real data state from the backend
+  const [userReadings, setUserReadings] = useState([]);
+  const [dailyReport, setDailyReport] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  // Fetch real data when user is authenticated
+  const fetchRealData = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const [readingsRes, reportRes] = await Promise.all([
+        apiRequest('/readings?limit=100').catch(() => ({ readings: [] })),
+        apiRequest(`/reports/daily?date=${selectedDate}`).catch(() => ({ report: null })),
+      ]);
+      setUserReadings(readingsRes.readings || []);
+      setDailyReport(reportRes.report || null);
+    } catch (err) {
+      console.error('Error fetching live chart data:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [user, selectedDate]);
+
+  useEffect(() => {
+    fetchRealData();
+  }, [fetchRealData]);
+
+  // Daily readings: use user's original readings if logged in, otherwise sample preview
+  const dailyReadings = useMemo(() => {
+    if (user) {
+      if (dailyReport && Array.isArray(dailyReport.readings)) {
+        return dailyReport.readings.map((r) => ({
+          ...r,
+          shortLabel: SHORT_LABELS[r.slot] || r.slot,
+        }));
+      }
+      // Fallback from userReadings
+      return userReadings
+        .filter((r) => {
+          const dStr = typeof r.date === 'string' ? r.date.slice(0, 10) : '';
+          return dStr === selectedDate;
+        })
+        .map((r) => ({
+          ...r,
+          shortLabel: SHORT_LABELS[r.slot] || r.slot,
+        }));
+    }
+    return getSampleReadingsForDate(selectedDate, todayStr);
+  }, [user, dailyReport, userReadings, selectedDate, todayStr]);
 
   const dailySummary = useMemo(() => {
+    if (user && dailyReport) {
+      return {
+        hasData: dailyReport.hasData ?? dailyReadings.length > 0,
+        count: dailyReport.count ?? dailyReadings.length,
+        highest: dailyReport.highest,
+        lowest: dailyReport.lowest,
+        average: dailyReport.average,
+      };
+    }
     if (dailyReadings.length === 0) {
       return { hasData: false, count: 0, highest: null, lowest: null, average: null };
     }
@@ -723,12 +907,15 @@ export default function GlucoseChartsSection() {
         (vals.reduce((sum, v) => sum + v, 0) / vals.length).toFixed(1)
       ),
     };
-  }, [dailyReadings]);
+  }, [user, dailyReport, dailyReadings]);
 
-  const monthData = useMemo(
-    () => getSampleMonthSeries(selectedDate, todayStr),
-    [selectedDate, todayStr]
-  );
+  // Monthly data: compute from real readings if logged in, otherwise sample preview
+  const monthData = useMemo(() => {
+    if (user) {
+      return computeMonthDataFromReadings(userReadings, selectedDate);
+    }
+    return getSampleMonthSeries(selectedDate, todayStr);
+  }, [user, userReadings, selectedDate, todayStr]);
 
   const activeSummary = viewMode === 'daily' ? dailySummary : monthData.summary;
 
@@ -766,16 +953,22 @@ export default function GlucoseChartsSection() {
       aria-labelledby="glucose-charts-heading"
       className="relative scroll-mt-20 border-t border-[#48a992]/20 bg-[#f1f6f3] py-16 sm:py-20"
     >
-      <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-[1440px] px-4 sm:px-6 lg:px-8">
         {/* Section Header & Controls */}
         <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full border border-[#48a992]/35 bg-[#fafcf9] px-3.5 py-1 text-xs font-semibold text-[#267464]">
               <TrendingUp className="h-3.5 w-3.5 text-[#48a992]" aria-hidden="true" />
               <span>Glucose Level Analytics</span>
-              <span className="rounded-full bg-[#e3f1eb] px-2 py-0.5 text-[10px] font-semibold text-[#267464]">
-                Preview Data
-              </span>
+              {user ? (
+                <span className="rounded-full bg-[#e3f1eb] px-2 py-0.5 text-[10px] font-semibold text-[#1e6355]">
+                  Live Account: {user.name}
+                </span>
+              ) : (
+                <span className="rounded-full bg-[#f8d5bf]/60 px-2 py-0.5 text-[10px] font-semibold text-[#8b4513]">
+                  Preview Mode
+                </span>
+              )}
             </div>
 
             <h2
@@ -785,8 +978,9 @@ export default function GlucoseChartsSection() {
               Daily &amp; Monthly Glucose Levels
             </h2>
             <p className="mt-2 max-w-2xl text-sm leading-relaxed text-[#4e6b64] sm:text-base">
-              Switch between daily meal-slot readings and full monthly trends to
-              understand how your blood glucose moves over time.
+              {user
+                ? `Viewing your recorded blood sugar trends. Switch between daily meal-slot readings and monthly summaries.`
+                : `Switch between daily meal-slot readings and full monthly trends to understand how your blood glucose moves over time.`}
             </p>
           </div>
 
@@ -876,9 +1070,11 @@ export default function GlucoseChartsSection() {
             value={activeSummary.average}
             unit="mg/dL"
             subtext={
-              viewMode === 'daily'
-                ? 'Mean across meal slots'
-                : `Mean across ${monthData.days.length} tracked days`
+              activeSummary.hasData
+                ? viewMode === 'daily'
+                  ? 'Mean across recorded meal slots'
+                  : `Mean across ${monthData.days.length} tracked days`
+                : 'No readings recorded yet'
             }
             icon={Activity}
             accent="teal"
@@ -888,9 +1084,11 @@ export default function GlucoseChartsSection() {
             value={activeSummary.highest}
             unit="mg/dL"
             subtext={
-              activeSummary.highest && activeSummary.highest > TARGET_MAX
-                ? 'Above 140 mg/dL target'
-                : 'Within healthy target'
+              activeSummary.highest
+                ? activeSummary.highest > TARGET_MAX
+                  ? 'Above 140 mg/dL target'
+                  : 'Within healthy target'
+                : 'No readings recorded yet'
             }
             icon={ArrowUpRight}
             accent="coral"
@@ -900,9 +1098,11 @@ export default function GlucoseChartsSection() {
             value={activeSummary.lowest}
             unit="mg/dL"
             subtext={
-              activeSummary.lowest && activeSummary.lowest < TARGET_MIN
-                ? 'Below 70 mg/dL target'
-                : 'Steady baseline reading'
+              activeSummary.lowest
+                ? activeSummary.lowest < TARGET_MIN
+                  ? 'Below 70 mg/dL target'
+                  : 'Steady baseline reading'
+                : 'No readings recorded yet'
             }
             icon={ArrowDownRight}
             accent="sage"
@@ -938,10 +1138,14 @@ export default function GlucoseChartsSection() {
             </div>
 
             {/* Compact Legend */}
-            <div className="flex items-center gap-4 text-xs font-medium text-[#4e6b64]">
+            <div className="flex flex-wrap items-center gap-4 text-xs font-medium text-[#4e6b64]">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-3 w-4 rounded-sm border border-[#48a992]/40 bg-[#48a992]/20" />
+                Target Range (70–140 mg/dL)
+              </span>
               <span className="inline-flex items-center gap-1.5">
                 <span className="h-2.5 w-2.5 rounded-full bg-[#48a992]" />
-                In Range (70–140)
+                In Range
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <span className="h-2.5 w-2.5 rounded-full bg-[#ec4d43]" />
@@ -950,10 +1154,24 @@ export default function GlucoseChartsSection() {
             </div>
           </div>
 
-          {viewMode === 'daily' ? (
-            <DailyChart readings={dailyReadings} />
+          {loading ? (
+            <div className="flex min-h-[300px] items-center justify-center text-sm text-[#5b7670]">
+              Loading your readings...
+            </div>
+          ) : viewMode === 'daily' ? (
+            <DailyChart
+              readings={dailyReadings}
+              onNavigateDashboard={() => navigate('/dashboard')}
+              isLoggedIn={Boolean(user)}
+              dateLabel={formatReadableDate(selectedDate)}
+            />
           ) : (
-            <MonthlyChart monthData={monthData} />
+            <MonthlyChart
+              monthData={monthData}
+              onNavigateDashboard={() => navigate('/dashboard')}
+              isLoggedIn={Boolean(user)}
+              monthLabel={formatMonthLabel(selectedDate)}
+            />
           )}
         </div>
       </div>
